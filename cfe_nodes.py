@@ -21,15 +21,10 @@ class CFE_Aspect_Ratio:
                     "2:3", 
                     "3:4", 
                     "4:7",
+                    "7:9",
                     "8:15",
-                    "9:7",
                     "9:16",
-                    "11:21",
-                    "13:18",
-                    "13:19",
-                    "14:17",
-                    "15:16",
-                    "15:17",
+                    "9:21",
                 ],),
                 "megapixel": ([".5 MP (SD1.5)", "1 MP (SDXL)", "2 MP (FLUX)"],),
                 "clip_size": ("FLOAT", {
@@ -57,6 +52,9 @@ class CFE_Aspect_Ratio:
 
     CATEGORY = "CFE"
 
+    def _find_lowest_64(self, value):
+        return (int(value + 23) >> 6) << 6
+
     def calculate_resolution(self, type, resolution, megapixel, clip_size, batch_size):
 
         if type == "square":
@@ -65,12 +63,10 @@ class CFE_Aspect_Ratio:
             colon = resolution.find(":")
             res0 = float(resolution[:colon])
             res1 = float(resolution[colon + 1:])
-            if type.find("portrait") != -1:
-                ratio = res0 / res1
-            else:
-                ratio = res1 / res0
+            ratio = res1/ res0
         
         mp_mark = megapixel[:1]
+        cfg_log = 6
 
         if mp_mark == "1":
             mp = 1024 * 1024
@@ -79,18 +75,27 @@ class CFE_Aspect_Ratio:
         else:
             mp = 512 * 512
 
-        clip_width = int(math.sqrt(math.floor(ratio * mp)))
-        off_by = clip_width % 8
-        clip_width -= off_by
-
-        clip_height = int(mp / clip_width)
-        off_by = clip_height % 8
-        clip_height -= off_by
+        large = int(math.sqrt(math.floor(ratio * mp)))
+        large = self._find_lowest_64(large)
+        
+        small =  int(large / ratio)
+        small =  self._find_lowest_64(small)
+        
+        if type.find("portrait") == -1:
+            clip_width = large
+            clip_height = small
+        else:
+            clip_width = small
+            clip_height = large
 
         latent = torch.zeros([batch_size, 4, clip_height // 8, clip_width // 8], device=self.device)
 
-        clip_width = math.floor(clip_width * clip_size)
-        clip_height = math.floor(clip_height * clip_size)
+        clip_width *= clip_size
+        clip_width = self._find_lowest_64(clip_width)
+        clip_height *= clip_size
+        clip_height = self._find_lowest_64(clip_height)
+
+
 
         return ({"samples":latent}, clip_width, clip_height)
 
