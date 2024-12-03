@@ -53,6 +53,10 @@ class CFE_Aspect_Ratio:
     CATEGORY = "CFE"
 
     def _find_lowest_64(self, value):
+        # We use shifting to multiply by 64 and then divide by 64
+        # not sure I understand this, but there's an additional requirement to be around 24 points
+        # of the corrected value, so we add 23 to ensure any time we're >24 points we end up in the
+        # corrected pixel space for most resolutions
         return (int(value + 23) >> 6) << 6
 
     def calculate_resolution(self, type, resolution, megapixel, clip_size, batch_size):
@@ -66,7 +70,6 @@ class CFE_Aspect_Ratio:
             ratio = res1/ res0
         
         mp_mark = megapixel[:1]
-        cfg_log = 6
 
         if mp_mark == "1":
             mp = 1024 * 1024
