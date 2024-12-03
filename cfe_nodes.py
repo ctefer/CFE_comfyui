@@ -21,15 +21,15 @@ class CFE_Aspect_Ratio:
                     "2:3", 
                     "3:4", 
                     "4:7",
+                    "8:15",
                     "9:7",
                     "9:16",
                     "11:21",
                     "13:18",
                     "13:19",
                     "14:17",
-                    "15:17",
                     "15:16",
-                    "19:10",
+                    "15:17",
                 ],),
                 "megapixel": ([".5 MP (SD1.5)", "1 MP (SDXL)", "2 MP (FLUX)"],),
                 "clip_size": ("FLOAT", {
@@ -80,7 +80,12 @@ class CFE_Aspect_Ratio:
             mp = 512 * 512
 
         clip_width = int(math.sqrt(math.floor(ratio * mp)))
-        clip_height = int(math.sqrt(math.floor((1.0/ratio) * mp)))
+        off_by = clip_width % 8
+        clip_width -= off_by
+
+        clip_height = int(mp / clip_width)
+        off_by = clip_height % 8
+        clip_height -= off_by
 
         latent = torch.zeros([batch_size, 4, clip_height // 8, clip_width // 8], device=self.device)
 
