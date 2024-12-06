@@ -36,7 +36,7 @@ class CFE_Aspect_Ratio:
                     "9:16",
                     "9:21",
                 ],),
-                "megapixel": ([".5 MP (SD1.5)", "1 MP (SDXL)", "2 MP (FLUX)"],),
+                "megapixel": (["1 MP (SDXL)", "2 MP (FLUX)", ".5 MP (SD1.5)"],),
                 "clip_size": ("FLOAT", {
                     "default": 1.0,
                     "min": 1.0,
@@ -159,6 +159,32 @@ class CFE_Flux_Out_Pipe:
         return (pipe, model, clip, vae, cond, sampler, sigmas)
     
 
+class CFE_Sigma_Sampler_Strings:
+    def __init__(self) -> None:
+        pass
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required" : {
+                "model" : ("MODEL", {"tooltip" : "The model used for denoising the input latent"}),
+                "sampler_select" : (comfy.samplers.SAMPLER_NAMES, {"tooltip" : "The name of the sampler being used"}),
+                "scheduler": (comfy.samplers.SCHEDULER_NAMES, {"tooltip" : "The name of the scheduler being used"}),
+            }
+        }
+
+
+    RETURN_TYPES = ("SAMPLER", "STRING")
+    RETURN_NAMES = ("sampler", "scheduler")
+    FUNCTION = "output"
+    CATEGORY = "CFE"
+
+
+
+    def output(self, sampler_select, scheduler):
+        return (comfy.samplers.sampler_object(sampler_select), scheduler, )
+
+
 
 class CFE_Sigma_Sampler:
     def __init__(self) -> None:
@@ -198,7 +224,38 @@ class CFE_Sigma_Sampler:
         return (comfy.samplers.sampler_object(sampler_select), sigmas, )
 
 
-class CFE_FLUX_Sampler:
+def _flux_sampler(model, noise, cfg, cond, sampler, sigmas, latent_image):
+    latent = latent_image
+    latent_image = latent["samples"]
+    latent = latent.copy()
+    latent_image = comfy.sample.fix_empty_latent_channels(model, latent_image)
+    latent["samples"] = latent_image
+
+    noise_mask = None
+    if "noise_mask" in latent:
+        noise_mask = latent["noise_mask"]
+
+
+    disable_pbar = not comfy.utils.PROGRESS_BAR_ENABLED
+    # update the conditioner value
+
+    condition = node_helpers.conditioning_set_values(cond, {"guidance": cfg})
+    guider = comfy.samplers.CFGGuider(model)
+    guider.inner_set_conds({"positive": condition})
+
+
+    samples = guider.sample(noise.generate_noise(latent), latent_image, sampler, sigmas, 
+                            denoise_mask=noise_mask, disable_pbar=disable_pbar, seed=noise.seed)
+    
+    samples = samples.to(comfy.model_management.intermediate_device())
+
+    out = latent.copy()
+    out["samples"] = samples
+
+    return out
+
+
+class CFE_FLUX_Pipe_Sampler:
     def __init__(self) -> None:
         pass
 
@@ -221,34 +278,34 @@ class CFE_FLUX_Sampler:
     def execute(self, pipe, noise, latent_image, cfg):
         model, _, vae, cond, sampler, sigmas = pipe
 
-        latent = latent_image
-        latent_image = latent["samples"]
-        latent = latent.copy()
-        latent_image = comfy.sample.fix_empty_latent_channels(model, latent_image)
-        latent["samples"] = latent_image
-
-        noise_mask = None
-        if "noise_mask" in latent:
-            noise_mask = latent["noise_mask"]
-
-
-        disable_pbar = not comfy.utils.PROGRESS_BAR_ENABLED
-        # update the conditioner value
-
-        condition = node_helpers.conditioning_set_values(cond, {"guidance": cfg})
-        guider = comfy.samplers.CFGGuider(model)
-        guider.inner_set_conds({"positive": condition})
-
-
-        samples = guider.sample(noise.generate_noise(latent), latent_image, sampler, sigmas, 
-                                denoise_mask=noise_mask, disable_pbar=disable_pbar, seed=noise.seed)
-        
-        samples = samples.to(comfy.model_management.intermediate_device())
-
-        out = latent.copy()
-        out["samples"] = samples
-
-
+        out = _flux_sampler(model, noise, cfg, cond, sampler, sigmas, latent_image)
         return (pipe, out, vae)
 
 
+class CFE_FLUX_Sampler:
+    def __init__(self) -> None:
+        pass
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "noise":("NOISE", {"tooltip": "Noise for generation"},),
+                "model": ("MODEL", {"tooltip": "The model used for denoising the input latent."}),
+                "vae": ("VAE", {"tooltip": "The latent image to denoise."}),
+                "cond": ("CONDITIONING", {"tooltip": "The conditioning describing the attributes you want to include in the image."}),
+                "sampler": ("SAMPLER", {"tooltip": "The algorithm used when sampling, this can affect the quality, speed, and style of the generated output."}),
+                "sigmas": ("SIGMAS", {"tooltip": "The scheduler controls how noise is gradually removed to form the image."}),
+                "latent_image": ("LATENT", {"tooltip": "The latent image."}),
+                "cfg": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.1, "round": 0.01, "tooltip": "The Classifier-Free Guidance scale balances creativity and adherence to the prompt. Higher values result in images more closely matching the prompt however too high values will negatively impact quality."}),
+            },
+        }
+
+    RETURN_TYPES = ("LATENT", "VAE",)
+    RETURN_NAMES = ("latent", "vae", )
+    FUNCTION = "execute"
+    CATEGORY = "CFE"
+
+    def execute(self, noise, model, vae, cond, sampler, sigmas, latent_image, cfg):
+        out = _flux_sampler(model, noise, cfg, cond, sampler, sigmas, latent_image)
+        return (out, vae, )
