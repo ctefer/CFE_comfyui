@@ -2,6 +2,7 @@ import math
 import torch
 import comfy
 import comfy.model_management
+import comfy.samplers
 import node_helpers
 
 
@@ -156,11 +157,49 @@ class CFE_Flux_Out_Pipe:
     def out_pipe(self, pipe):
         model, clip, vae, cond, sampler, sigmas = pipe
         return (pipe, model, clip, vae, cond, sampler, sigmas)
+    
 
+
+class CFE_Sigma_Sampler:
+    def __init__(self) -> None:
+        pass
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required" : {
+                "model" : ("MODEL", {"tooltip" : "The model used for denoising the input latent"}),
+                "sampler_select" : (comfy.samplers.SAMPLER_NAMES, {"tooltip" : "The name of the sampler being used"}),
+                "scheduler": (comfy.samplers.SCHEDULER_NAMES, {"tooltip" : "The name of the scheduler being used"}),
+                "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
+                "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+            }
+        }
+
+
+    RETURN_TYPES = ("SAMPLER", "SIGMAS")
+    RETURN_NAMES = ("sampler", "sigmas")
+    FUNCTION = "execute"
+    CATEGORY = "CFE"
+
+
+    def execute(self, model, sampler_select, scheduler, steps, denoise):
+        total_steps = steps
+        sigmas = None
+        if denoise < 1.0:
+            if denoise <= 0.0:
+                sigmas = torch.FloatTensor([])
+            total_steps = int(steps/denoise)
+
+        if sigmas is None:
+            sigmas = comfy.samplers.calculate_sigmas(model.get_model_object("model_sampling"), scheduler, total_steps).cpu()
+            sigmas = sigmas[-(steps + 1):]
+
+        return (comfy.samplers.sampler_object(sampler_select), sigmas, )
 
 
 class CFE_FLUX_Sampler:
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     @classmethod

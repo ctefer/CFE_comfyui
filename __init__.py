@@ -9,6 +9,7 @@ NODE_CLASS_MAPPINGS = {
     "CFE Flux In Pipe" : CFE_Flux_In_Pipe,
     "CFE Flux Out Pipe" : CFE_Flux_Out_Pipe,
     "CFE FLUX Sampler" : CFE_FLUX_Sampler,
+    "CFE FLUX Sigma Sampler" : CFE_Sigma_Sampler,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -16,4 +17,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "CFE_Flux_In_Pipe":"CFE Flux In Pipe",
     "CFE_Flux_Out_Pipe":"CFE Flux Out Pipe",
     "CFE_FLUX_Sampler":"CFE Flux Sampler",
+    "CFE_Sigma_Sampler":"CFE Flux Sigma Sampler",
 }
