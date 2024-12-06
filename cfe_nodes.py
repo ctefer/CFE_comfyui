@@ -1,8 +1,17 @@
 import math
 import torch
 import comfy
+import comfy.model_management
+import node_helpers
 
-   
+
+def _find_lowest_64(value):
+    # We use shifting to multiply by 64 and then divide by 64
+    # not sure I understand this, but there's an additional requirement to be around 24 points
+    # of the corrected value, so we add 23 to ensure any time we're >24 points we end up in the
+    # corrected pixel space for most resolutions
+    return (int(value + 23) >> 6) << 6
+
 
 class CFE_Aspect_Ratio:
     """
@@ -52,12 +61,7 @@ class CFE_Aspect_Ratio:
 
     CATEGORY = "CFE"
 
-    def _find_lowest_64(self, value):
-        # We use shifting to multiply by 64 and then divide by 64
-        # not sure I understand this, but there's an additional requirement to be around 24 points
-        # of the corrected value, so we add 23 to ensure any time we're >24 points we end up in the
-        # corrected pixel space for most resolutions
-        return (int(value + 23) >> 6) << 6
+   
 
     def calculate_resolution(self, type, resolution, megapixel, clip_size, batch_size):
 
@@ -79,10 +83,10 @@ class CFE_Aspect_Ratio:
             mp = 512 * 512
 
         large = int(math.sqrt(math.floor(ratio * mp)))
-        large = self._find_lowest_64(large)
+        large = _find_lowest_64(large)
         
         small =  int(large / ratio)
-        small =  self._find_lowest_64(small)
+        small =  _find_lowest_64(small)
         
         if type.find("portrait") == -1:
             clip_width = large
@@ -94,11 +98,118 @@ class CFE_Aspect_Ratio:
         latent = torch.zeros([batch_size, 4, clip_height // 8, clip_width // 8], device=self.device)
 
         clip_width *= clip_size
-        clip_width = self._find_lowest_64(clip_width)
+        clip_width = _find_lowest_64(clip_width)
         clip_height *= clip_size
-        clip_height = self._find_lowest_64(clip_height)
+        clip_height = _find_lowest_64(clip_height)
 
 
 
         return ({"samples":latent}, clip_width, clip_height)
+    
+
+class CFE_Flux_In_Pipe:
+    def __init__(self) -> None:
+        pass
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model": ("MODEL", {"tooltip": "The model used for denoising the input latent."}),
+                "clip": ("CLIP", {"tooltip": "The clip used for text encoding."}),
+                "vae": ("VAE", {"tooltip": "The latent image to denoise."}),
+                "cond": ("CONDITIONING", {"tooltip": "The conditioning describing the attributes you want to include in the image."}),
+                "sampler": ("SAMPLER", {"tooltip": "The algorithm used when sampling, this can affect the quality, speed, and style of the generated output."}),
+                "sigmas": ("SIGMAS", {"tooltip": "The scheduler controls how noise is gradually removed to form the image."}),
+            },
+        }
+    
+    RETURN_TYPES = ("FLUX_PIPE",)
+    RETURN_NAMES = ("pipe",)
+
+    FUNCTION = "in_pipe"
+    CATEGORY = "CFE"
+
+    def in_pipe(self, model, clip, vae, cond, sampler, sigmas):
+        pipe = (model, clip, vae, cond, sampler, sigmas)
+        return (pipe, )
+    
+
+class CFE_Flux_Out_Pipe:
+    def __init__(self) -> None:
+        pass
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "pipe": ("FLUX_PIPE", {"tooltip": "The bus line carrying the data."}),
+            },
+        }
+    
+    RETURN_TYPES = ("FLUX_PIPE", "MODEL", "CLIP", "VAE", "CONDITIONING", "SAMPLER", "SIGMAS")
+    RETURN_NAMES = ("pipe", "model", "clip", "vae", "cond", "sampler", "sigmas" )
+
+    FUNCTION = "out_pipe"
+    CATEGORY = "CFE"
+
+    def out_pipe(self, pipe):
+        model, clip, vae, cond, sampler, sigmas = pipe
+        return (pipe, model, clip, vae, cond, sampler, sigmas)
+
+
+
+class CFE_FLUX_Sampler:
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "pipe": ("FLUX_PIPE", {"tooltip": "The bus line carrying the data."}),
+                "noise":("NOISE", {"tooltip": "Noise for generation"},),
+                "latent_image": ("LATENT", {"tooltip": "The latent image."}),
+                "cfg": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step":0.1, "round": 0.01, "tooltip": "The Classifier-Free Guidance scale balances creativity and adherence to the prompt. Higher values result in images more closely matching the prompt however too high values will negatively impact quality."}),
+            },
+        }
+
+    RETURN_TYPES = ("FLUX_PIPE", "LATENT","VAE")
+    RETURN_NAMES = ("pipe", "latent", "vae")
+    FUNCTION = "execute"
+    CATEGORY = "CFE"
+
+    def execute(self, pipe, noise, latent_image, cfg):
+        model, _, vae, cond, sampler, sigmas = pipe
+
+        latent = latent_image
+        latent_image = latent["samples"]
+        latent = latent.copy()
+        latent_image = comfy.sample.fix_empty_latent_channels(model, latent_image)
+        latent["samples"] = latent_image
+
+        noise_mask = None
+        if "noise_mask" in latent:
+            noise_mask = latent["noise_mask"]
+
+
+        disable_pbar = not comfy.utils.PROGRESS_BAR_ENABLED
+        # update the conditioner value
+
+        condition = node_helpers.conditioning_set_values(cond, {"guidance": cfg})
+        guider = comfy.samplers.CFGGuider(model)
+        guider.inner_set_conds({"positive": condition})
+
+
+        samples = guider.sample(noise.generate_noise(latent), latent_image, sampler, sigmas, 
+                                denoise_mask=noise_mask, disable_pbar=disable_pbar, seed=noise.seed)
+        
+        samples = samples.to(comfy.model_management.intermediate_device())
+
+        out = latent.copy()
+        out["samples"] = samples
+
+
+        return (pipe, out, vae)
+
 
