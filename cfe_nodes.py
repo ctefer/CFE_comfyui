@@ -167,7 +167,6 @@ class CFE_Sigma_Sampler_Strings:
     def INPUT_TYPES(s):
         return {
             "required" : {
-                "model" : ("MODEL", {"tooltip" : "The model used for denoising the input latent"}),
                 "sampler_select" : (comfy.samplers.SAMPLER_NAMES, {"tooltip" : "The name of the sampler being used"}),
                 "scheduler": (comfy.samplers.SCHEDULER_NAMES, {"tooltip" : "The name of the scheduler being used"}),
             }
