@@ -16,12 +16,11 @@ def build_sigmas(model, steps, scheduler, denoise):
         Builds the sigmas from the steps and the denoise. 
     """
     sigmas = None
-    if denoise < 1.0:
-        if denoise <= 0.0:
-            sigmas = torch.FloatTensor([])
-        total_steps = int(steps/denoise)
+    if denoise <= 0.0:
+        sigmas = torch.FloatTensor([])
 
     if sigmas is None:
+        total_steps = int(steps/denoise)
         sigmas = comfy.samplers.calculate_sigmas(model.get_model_object("model_sampling"), scheduler, total_steps).cpu()
         sigmas = sigmas[-(steps + 1):]
 
