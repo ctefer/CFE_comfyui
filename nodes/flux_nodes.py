@@ -1,5 +1,3 @@
-import math
-import torch
 import comfy
 import comfy.model_management
 import comfy.samplers
@@ -44,125 +42,7 @@ def _flux_sampler(model, noise, cfg, cond, sampler, sigmas, latent_image):
 
     return latent
 
-def _find_lowest_64(value):
-    """
-        We use shifting to multiply by 64 and then divide by 64
-        not sure I understand this, but there's an additional requirement to be around 24 points
-        of the corrected value, so we add 23 to ensure any time we're >24 points we end up in the
-        corrected pixel space for most resolutions
-    """
-    return (int(value + 23) >> 6) << 6
 
-def _build_sigmas(model, steps, scheduler, denoise):
-    """
-        Builds the sigmas from the steps and the denoise. 
-    """
-    sigmas = None
-    if denoise < 1.0:
-        if denoise <= 0.0:
-            sigmas = torch.FloatTensor([])
-        total_steps = int(steps/denoise)
-
-    if sigmas is None:
-        sigmas = comfy.samplers.calculate_sigmas(model.get_model_object("model_sampling"), scheduler, total_steps).cpu()
-        sigmas = sigmas[-(steps + 1):]
-
-    return sigmas
-
-
-class CFE_Aspect_Ratio:
-    """
-        Creates an empty latent image that will more easily characterize the resolution process for SD1.5, SDXL, and FLUX
-    """
-    def __init__(self):
-        self.device = comfy.model_management.intermediate_device()
-
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "type" : (["square", "portrait (w:h)", "landscape (h:w)"],),
-                "resolution": ([
-                    "1:1",
-                    "2:3", 
-                    "3:4", 
-                    "4:7",
-                    "7:9",
-                    "8:15",
-                    "9:16",
-                    "9:21",
-                ],),
-                "megapixel": (["1 MP (SDXL)", "2 MP (FLUX)", ".5 MP (SD1.5)"],),
-                "clip_size": ("FLOAT", {
-                    "default": 1.0,
-                    "min": 1.0,
-                    "max": 10.0,
-                    "step": 0.5,
-                    "tooltip": "Multiplies the output width and height values",
-                    "lazy" : True
-                }),
-                "batch_size": ("INT", {
-                    "default": 1, 
-                    "min": 1, 
-                    "max": 4096, 
-                    "tooltip": "The number of latent images in the batch.",
-                    "lazy" : True
-                }),
-            },
-        }
-
-    RETURN_TYPES = ("LATENT","INT","INT")
-    RETURN_NAMES = ("latent", "clip_width","clip_height")
-
-    FUNCTION = "calculate_resolution"
-
-    CATEGORY = "CFE"
-
-   
-
-    def calculate_resolution(self, type, resolution, megapixel, clip_size, batch_size):
-
-        if type == "square":
-            ratio = 1
-        else:
-            colon = resolution.find(":")
-            res0 = float(resolution[:colon])
-            res1 = float(resolution[colon + 1:])
-            ratio = res1/ res0
-        
-        mp_mark = megapixel[:1]
-
-        if mp_mark == "1":
-            mp = 1024 * 1024
-        elif mp_mark == "2":
-            mp = 2 * 1024 * 1024
-        else:
-            mp = 512 * 512
-
-        large = int(math.sqrt(math.floor(ratio * mp)))
-        large = _find_lowest_64(large)
-        
-        small =  int(large / ratio)
-        small =  _find_lowest_64(small)
-        
-        if type.find("portrait") == -1:
-            clip_width = large
-            clip_height = small
-        else:
-            clip_width = small
-            clip_height = large
-
-        latent = torch.zeros([batch_size, 4, clip_height // 8, clip_width // 8], device=self.device)
-
-        clip_width *= clip_size
-        clip_width = _find_lowest_64(clip_width)
-        clip_height *= clip_size
-        clip_height = _find_lowest_64(clip_height)
-
-
-
-        return ({"samples":latent}, clip_width, clip_height)
-    
 
 class CFE_Flux_In_Pipe:
     def __init__(self) -> None:
@@ -185,7 +65,7 @@ class CFE_Flux_In_Pipe:
     RETURN_NAMES = ("pipe",)
 
     FUNCTION = "in_pipe"
-    CATEGORY = "CFE"
+    CATEGORY = "CFE/flux"
 
     def in_pipe(self, model, clip, vae, cond, sampler, scheduler):
         pipe = (model, clip, vae, cond, sampler, scheduler)
@@ -208,63 +88,14 @@ class CFE_Flux_Out_Pipe:
     RETURN_NAMES = ("pipe", "model", "clip", "vae", "cond", "sampler", "scheduler" )
 
     FUNCTION = "out_pipe"
-    CATEGORY = "CFE"
+    CATEGORY = "CFE/flux"
 
     def out_pipe(self, pipe):
         model, clip, vae, cond, sampler, scheduler = pipe
         return (pipe, model, clip, vae, cond, sampler, scheduler)
     
 
-class CFE_Scheduler:
-    def __init__(self) -> None:
-        pass
 
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required" : {
-                "model" : ("MODEL", {"tooltip" : "The model used for denoising the input latent"}),
-                "scheduler": ("STRING", {"default": "euler", "tooltip" : "The name of the scheduler being used"}),
-                "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
-                "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-            }
-        }
-
-
-    RETURN_TYPES = ("SIGMAS",)
-    RETURN_NAMES = ("scheduler",)
-    FUNCTION = "output"
-    CATEGORY = "CFE"
-
-
-
-    def output(self, model, scheduler, steps, denoise):
-        sigmas = _build_sigmas(model, steps, scheduler, denoise)
-        return (sigmas, )
-
-class CFE_Sigma_Sampler_Strings:
-    def __init__(self) -> None:
-        pass
-
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required" : {
-                "sampler" : (comfy.samplers.SAMPLER_NAMES, {"tooltip" : "The name of the sampler being used"}),
-                "scheduler": (comfy.samplers.SCHEDULER_NAMES, {"tooltip" : "The name of the scheduler being used"}),
-            }
-        }
-
-
-    RETURN_TYPES = ("SAMPLER", "STRING")
-    RETURN_NAMES = ("sampler", "scheduler")
-    FUNCTION = "output"
-    CATEGORY = "CFE"
-
-
-
-    def output(self, sampler_select, scheduler):
-        return (comfy.samplers.sampler_object(sampler_select), scheduler, )
 
 class CFE_Flux_Guidance:
     def __init__(self) -> None:
@@ -284,7 +115,7 @@ class CFE_Flux_Guidance:
     RETURN_TYPES = ("CONDITIONING",)
     RETURN_NAMES = ("cond",)
     FUNCTION = "output"
-    CATEGORY = "CFE"
+    CATEGORY = "CFE/flux"
 
     def output(self, clip, guidance, text):
         
@@ -295,32 +126,7 @@ class CFE_Flux_Guidance:
         
         return ([[cond, output]], )
 
-class CFE_Sigma_Sampler:
-    def __init__(self) -> None:
-        pass
 
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required" : {
-                "model" : ("MODEL", {"tooltip" : "The model used for denoising the input latent"}),
-                "sampler_select" : (comfy.samplers.SAMPLER_NAMES, {"tooltip" : "The name of the sampler being used"}),
-                "scheduler": (comfy.samplers.SCHEDULER_NAMES, {"tooltip" : "The name of the scheduler being used"}),
-                "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
-                "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-            }
-        }
-
-
-    RETURN_TYPES = ("SAMPLER", "SIGMAS")
-    RETURN_NAMES = ("sampler", "sigmas")
-    FUNCTION = "execute"
-    CATEGORY = "CFE"
-
-
-    def execute(self, model, sampler_select, scheduler, steps, denoise):
-        sigmas = _build_sigmas(model, steps, scheduler, denoise)
-        return (comfy.samplers.sampler_object(sampler_select), sigmas, )
 
 
 
@@ -346,7 +152,7 @@ class CFE_FLUX_Pipe_Sampler:
     RETURN_TYPES = ("FLUX_PIPE", "LATENT","VAE")
     RETURN_NAMES = ("pipe", "latent", "vae")
     FUNCTION = "execute"
-    CATEGORY = "CFE"
+    CATEGORY = "CFE/flux"
 
     def execute(self, pipe, noise, latent_image, cfg, steps, denoise):
         model, _, vae, cond, sampler, scheduler = pipe
@@ -377,7 +183,7 @@ class CFE_FLUX_Sampler:
     RETURN_TYPES = ("LATENT", "VAE",)
     RETURN_NAMES = ("latent", "vae", )
     FUNCTION = "execute"
-    CATEGORY = "CFE"
+    CATEGORY = "CFE/flux"
 
     def execute(self, noise, model, vae, cond, sampler, sigmas, latent_image, cfg):
         out = _flux_sampler(model, noise, cfg, cond, sampler, sigmas, latent_image)
