@@ -266,6 +266,34 @@ class CFE_Sigma_Sampler_Strings:
     def output(self, sampler_select, scheduler):
         return (comfy.samplers.sampler_object(sampler_select), scheduler, )
 
+class CFE_Flux_Guidance:
+    def __init__(self) -> None:
+        pass
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required" : {
+                "clip" : ("CLIP", {"tooltip" : "The name of the sampler being used"}),
+                "guidance": ("FLOAT", {"default": 3.5, "min": 0.0, "max": 100.0, "step":0.1, "round": 0.01, "tooltip": "The Classifier-Free Guidance scale balances creativity and adherence to the prompt. Higher values result in images more closely matching the prompt however too high values will negatively impact quality."}),
+                "text": ("STRING", {"multiline": True, "dynamicPrompts": True, "tooltip": "The text to be encoded."}),
+            }
+        }
+
+
+    RETURN_TYPES = ("CONDITIONING",)
+    RETURN_NAMES = ("cond",)
+    FUNCTION = "output"
+    CATEGORY = "CFE"
+
+    def output(self, clip, guidance, text):
+        
+        tokens = clip.tokenize(text)
+        output = clip.encode_from_tokens(tokens, return_pooled=True, return_dict=True)
+        cond = output.pop("cond")
+        node_helpers.conditioning_set_values(cond, {"guidance": guidance})
+        
+        return ([[cond, output]], )
 
 class CFE_Sigma_Sampler:
     def __init__(self) -> None:
