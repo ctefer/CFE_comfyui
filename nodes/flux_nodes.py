@@ -3,6 +3,8 @@ import comfy.model_management
 import comfy.samplers
 import node_helpers
 
+from .cfe_utils import *
+
 
 # NOTES:
 ## 
@@ -122,14 +124,9 @@ class CFE_Flux_Guidance:
         tokens = clip.tokenize(text)
         output = clip.encode_from_tokens(tokens, return_pooled=True, return_dict=True)
         cond = output.pop("cond")
-        node_helpers.conditioning_set_values(cond, {"guidance": guidance})
+        output["guidance"] = guidance
         
         return ([[cond, output]], )
-
-
-
-
-
 
 
 class CFE_FLUX_Pipe_Sampler:
@@ -156,7 +153,7 @@ class CFE_FLUX_Pipe_Sampler:
 
     def execute(self, pipe, noise, latent_image, cfg, steps, denoise):
         model, _, vae, cond, sampler, scheduler = pipe
-        sigmas = _build_sigmas(model, steps, scheduler, denoise)
+        sigmas = build_sigmas(model, steps, scheduler, denoise)
         out = _flux_sampler(model, noise, cfg, cond, sampler, sigmas, latent_image)
         return (pipe, out, vae)
 
